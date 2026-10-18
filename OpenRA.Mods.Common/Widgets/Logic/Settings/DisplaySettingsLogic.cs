@@ -248,14 +248,16 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 					return selectPreset;
 				};
 
-				resolutionPresetDropdown.OnMouseDown = _ => ShowResolutionPresetDropdown(resolutionPresetDropdown, windowWidth, windowHeight);
+				resolutionPresetDropdown.OnMouseDown = _ => ShowResolutionPresetDropdown(resolutionPresetDropdown, graphicSettings, windowWidth, windowHeight);
 			}
 
 			var restartDesc = panel.Get("VIDEO_RESTART_REQUIRED_DESC");
-			restartDesc.IsVisible = () => graphicSettings.Mode != originalGraphicSettings.Mode ||
-				graphicSettings.VideoDisplay != originalGraphicSettings.VideoDisplay ||
-				graphicSettings.GLProfile != originalGraphicSettings.GLProfile ||
-				(graphicSettings.Mode == WindowMode.Windowed && (origWidthText != windowWidth.Text || origHeightText != windowHeight.Text));
+			restartDesc.IsVisible = () => Platform.CurrentPlatform == PlatformType.OSX
+				? graphicSettings.GLProfile != originalGraphicSettings.GLProfile
+				: graphicSettings.Mode != originalGraphicSettings.Mode ||
+					graphicSettings.VideoDisplay != originalGraphicSettings.VideoDisplay ||
+					graphicSettings.GLProfile != originalGraphicSettings.GLProfile ||
+					(graphicSettings.Mode == WindowMode.Windowed && (origWidthText != windowWidth.Text || origHeightText != windowHeight.Text));
 
 			var frameLimitGamespeedCheckbox = panel.Get<CheckboxWidget>("FRAME_LIMIT_GAMESPEED_CHECKBOX");
 			var frameLimitCheckbox = panel.Get<CheckboxWidget>("FRAME_LIMIT_CHECKBOX");
@@ -273,12 +275,36 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 				int.TryParse(windowHeight.Text, NumberStyles.Integer, NumberFormatInfo.CurrentInfo, out var y);
 				graphicSettings.WindowedSize = new int2(x, y);
 
+				if (Platform.CurrentPlatform == PlatformType.OSX)
+				{
+					if (graphicSettings.Mode != originalGraphicSettings.Mode ||
+						graphicSettings.VideoDisplay != originalGraphicSettings.VideoDisplay ||
+						graphicSettings.WindowedSize != originalGraphicSettings.WindowedSize)
+						ApplyWindowModeOnOSX(graphicSettings);
+
+					return graphicSettings.GLProfile != originalGraphicSettings.GLProfile;
+				}
+
 				return graphicSettings.Mode != originalGraphicSettings.Mode ||
 					graphicSettings.VideoDisplay != originalGraphicSettings.VideoDisplay ||
 					graphicSettings.WindowedSize != originalGraphicSettings.WindowedSize ||
 					graphicSettings.FullscreenSize != originalGraphicSettings.FullscreenSize ||
 					graphicSettings.GLProfile != originalGraphicSettings.GLProfile;
 			};
+		}
+
+		static void ApplyWindowModeOnOSX(GraphicSettings graphicSettings)
+		{
+			if (Platform.CurrentPlatform != PlatformType.OSX)
+				return;
+
+			originalGraphicSettings.Mode = graphicSettings.Mode;
+			originalGraphicSettings.VideoDisplay = graphicSettings.VideoDisplay;
+			originalGraphicSettings.WindowedSize = graphicSettings.WindowedSize;
+			Game.RunAfterTick(() => Game.Renderer.SetWindowMode(
+				graphicSettings.Mode,
+				new Size(graphicSettings.WindowedSize.X, graphicSettings.WindowedSize.Y),
+				graphicSettings.VideoDisplay));
 		}
 
 		Action ResetPanel(Widget panel)
@@ -296,6 +322,8 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 				graphicSettings.WindowedSize = defaultGraphicSettings.WindowedSize;
 				graphicSettings.CursorDouble = defaultGraphicSettings.CursorDouble;
 				graphicSettings.ViewportDistance = defaultGraphicSettings.ViewportDistance;
+
+				ApplyWindowModeOnOSX(graphicSettings);
 
 				if (graphicSettings.UIScale != defaultGraphicSettings.UIScale)
 				{
@@ -327,6 +355,7 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 					{
 						graphicSettings.Mode = options[o];
 						SettingsUtils.AdjustSettingsScrollPanelLayout(scrollPanel);
+						ApplyWindowModeOnOSX(graphicSettings);
 					});
 
 				item.Get<LabelWidget>("LABEL").GetText = () => o;
@@ -387,7 +416,11 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 			{
 				var item = ScrollItemWidget.Setup(itemTemplate,
 					() => graphicSettings.VideoDisplay == o,
-					() => graphicSettings.VideoDisplay = o);
+					() =>
+					{
+						graphicSettings.VideoDisplay = o;
+						ApplyWindowModeOnOSX(graphicSettings);
+					});
 
 				var label = $"Display {o + 1}";
 				item.Get<LabelWidget>("LABEL").GetText = () => label;
@@ -397,7 +430,8 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 			dropdown.ShowDropDown("LABEL_DROPDOWN_TEMPLATE", 500, Enumerable.Range(0, Game.Renderer.DisplayCount), SetupItem);
 		}
 
-		static void ShowResolutionPresetDropdown(DropDownButtonWidget dropdown, TextFieldWidget windowWidth, TextFieldWidget windowHeight)
+		static void ShowResolutionPresetDropdown(
+			DropDownButtonWidget dropdown, GraphicSettings graphicSettings, TextFieldWidget windowWidth, TextFieldWidget windowHeight)
 		{
 			var sortedModes = CommonResolutions
 				.OrderBy(res => res.Width)
@@ -415,6 +449,11 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 					{
 						windowWidth.Text = resolution.Width.ToString(NumberFormatInfo.CurrentInfo);
 						windowHeight.Text = resolution.Height.ToString(NumberFormatInfo.CurrentInfo);
+						if (Platform.CurrentPlatform == PlatformType.OSX)
+						{
+							graphicSettings.WindowedSize = new int2(resolution.Width, resolution.Height);
+							ApplyWindowModeOnOSX(graphicSettings);
+						}
 					});
 
 				var label = $"{resolution.Width}x{resolution.Height}";

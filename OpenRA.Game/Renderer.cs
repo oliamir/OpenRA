@@ -126,6 +126,11 @@ namespace OpenRA
 			Window.SetScaleModifier(scale);
 		}
 
+		public void SetWindowMode(WindowMode mode, Size windowedSize, int videoDisplay)
+		{
+			Window.SetWindowMode(mode, windowedSize, videoDisplay);
+		}
+
 		public void InitializeFonts(ModData modData)
 		{
 			if (Fonts != null)

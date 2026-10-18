@@ -76,6 +76,7 @@ namespace OpenRA
 		void SetWindowTitle(string title);
 		void SetRelativeMouseMode(bool mode);
 		void SetScaleModifier(float scale);
+		void SetWindowMode(WindowMode mode, Size windowedSize, int videoDisplay);
 
 		GLProfile GLProfile { get; }
 

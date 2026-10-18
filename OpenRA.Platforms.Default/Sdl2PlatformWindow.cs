@@ -31,7 +31,7 @@ namespace OpenRA.Platforms.Default
 		bool disposed;
 
 		readonly Lock syncObject = new();
-		readonly WindowMode windowMode;
+		WindowMode windowMode;
 		Size windowSize;
 		Size surfaceSize;
 		float windowScale = 1f;
@@ -664,6 +664,68 @@ namespace OpenRA.Platforms.Default
 			var oldScaleModifier = scaleModifier;
 			scaleModifier = scale;
 			OnWindowScaleChanged(windowScale, windowScale * oldScaleModifier, windowScale, windowScale * scaleModifier);
+		}
+
+		public void SetWindowMode(WindowMode mode, Size windowedSize, int videoDisplay)
+		{
+			VerifyThreadAffinity();
+			if (Platform.CurrentPlatform != PlatformType.OSX)
+				return;
+
+			lock (syncObject)
+				windowMode = mode;
+
+			if (videoDisplay < 0 || videoDisplay >= DisplayCount)
+				videoDisplay = CurrentDisplay >= 0 ? CurrentDisplay : 0;
+
+			if (mode == WindowMode.Windowed)
+			{
+				SDL.SDL_SetWindowFullscreen(Window, 0);
+				SDL.SDL_SetWindowResizable(Window, SDL.SDL_bool.SDL_TRUE);
+				SDL.SDL_SetWindowMinimumSize(Window, 640, 480);
+
+				var targetWidth = windowedSize.Width;
+				var targetHeight = windowedSize.Height;
+				if (targetWidth <= 0 || targetHeight <= 0)
+				{
+					SDL.SDL_GetCurrentDisplayMode(videoDisplay, out var display);
+					targetWidth = display.w;
+					targetHeight = display.h;
+				}
+
+				if (SDL.SDL_GetDisplayUsableBounds(videoDisplay, out var bounds) == 0)
+				{
+					targetWidth = Math.Min(targetWidth, bounds.w);
+					targetHeight = Math.Min(targetHeight, bounds.h);
+				}
+
+				SDL.SDL_SetWindowSize(Window, targetWidth, targetHeight);
+				SDL.SDL_SetWindowPosition(Window, SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay));
+			}
+			else if (mode == WindowMode.PseudoFullscreen)
+			{
+				if (CurrentDisplay != videoDisplay)
+				{
+					SDL.SDL_SetWindowFullscreen(Window, 0);
+					SDL.SDL_SetWindowPosition(Window, SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay));
+				}
+
+				SDL.SDL_SetWindowFullscreen(Window, (uint)SDL.SDL_WindowFlags.SDL_WINDOW_FULLSCREEN_DESKTOP);
+				SDL.SDL_SetHint(SDL.SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+			}
+			else if (mode == WindowMode.Fullscreen)
+			{
+				if (CurrentDisplay != videoDisplay)
+				{
+					SDL.SDL_SetWindowFullscreen(Window, 0);
+					SDL.SDL_SetWindowPosition(Window, SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay));
+				}
+
+				SDL.SDL_SetWindowFullscreen(Window, (uint)SDL.SDL_WindowFlags.SDL_WINDOW_FULLSCREEN);
+			}
+
+			lastDisplayIndex = CurrentDisplay;
+			WindowSizeChanged();
 		}
 	}
 }
