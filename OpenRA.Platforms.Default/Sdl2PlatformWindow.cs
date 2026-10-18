@@ -31,9 +31,11 @@ namespace OpenRA.Platforms.Default
 		bool disposed;
 
 		readonly Lock syncObject = new();
-		readonly Size windowSize;
+		readonly WindowMode windowMode;
+		Size windowSize;
 		Size surfaceSize;
 		float windowScale = 1f;
+		int lastDisplayIndex;
 		int2? lockedMousePosition;
 		float scaleModifier;
 		readonly GLProfile profile;
@@ -139,6 +141,7 @@ namespace OpenRA.Platforms.Default
 			// Lock the Window/Surface properties until initialization is complete
 			lock (syncObject)
 			{
+				this.windowMode = windowMode;
 				this.scaleModifier = scaleModifier;
 
 				// Disable legacy scaling on Windows
@@ -225,14 +228,19 @@ namespace OpenRA.Platforms.Default
 
 				Console.WriteLine($"Using resolution: {windowSize.Width}x{windowSize.Height}");
 
-				const SDL.SDL_WindowFlags WindowFlags = SDL.SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL.SDL_WindowFlags.SDL_WINDOW_ALLOW_HIGHDPI;
+				var windowFlags = SDL.SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL.SDL_WindowFlags.SDL_WINDOW_ALLOW_HIGHDPI;
+				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode == WindowMode.Windowed)
+					windowFlags |= SDL.SDL_WindowFlags.SDL_WINDOW_RESIZABLE;
 
 				// HiDPI doesn't work properly on OSX with (legacy) fullscreen mode
 				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode == WindowMode.Fullscreen)
 					SDL.SDL_SetHint(SDL.SDL_HINT_VIDEO_HIGHDPI_DISABLED, "1");
 
 				window = SDL.SDL_CreateWindow("OpenRA", SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay),
-					windowSize.Width, windowSize.Height, WindowFlags);
+					windowSize.Width, windowSize.Height, windowFlags);
+
+				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode == WindowMode.Windowed)
+					SDL.SDL_SetWindowMinimumSize(Window, 640, 480);
 
 				if (Platform.CurrentPlatform == PlatformType.Linux)
 				{
@@ -320,10 +328,8 @@ namespace OpenRA.Platforms.Default
 						// SDL (as of version 2.26) does not contain an API to query the safeAreaInsets before
 						// the window is created. We work around this by checking the window height after going
 						// fullscreen, and recalculating our sizes to match the new window geometry.
-						//
-						// This workaround will become redundant once window resizing is implemented.
 						SDL.SDL_GetWindowSize(Window, out var width, out var height);
-						if (height != windowSize.Height)
+						if (width != windowSize.Width || height != windowSize.Height)
 						{
 							windowSize = new Size(width, height);
 
@@ -336,6 +342,7 @@ namespace OpenRA.Platforms.Default
 					}
 				}
 
+				lastDisplayIndex = CurrentDisplay;
 				Console.WriteLine($"Using window scale {windowScale:F2}");
 			}
 
@@ -443,22 +450,64 @@ namespace OpenRA.Platforms.Default
 			}
 		}
 
+		internal void DisplayChanged(bool checkDisplayChangeOnly = false)
+		{
+			if (Platform.CurrentPlatform != PlatformType.OSX)
+				return;
+
+			var displayIndex = CurrentDisplay;
+			var displayChanged = displayIndex >= 0 && displayIndex != lastDisplayIndex;
+			if (displayIndex >= 0)
+				lastDisplayIndex = displayIndex;
+
+			if ((!checkDisplayChangeOnly || displayChanged) &&
+				windowMode == WindowMode.Windowed && displayIndex >= 0 &&
+				SDL.SDL_GetDisplayUsableBounds(displayIndex, out var bounds) == 0)
+			{
+				SDL.SDL_GetWindowSize(Window, out var winWidth, out var winHeight);
+				var clampedWidth = Math.Min(winWidth, bounds.w);
+				var clampedHeight = Math.Min(winHeight, bounds.h);
+				if (clampedWidth != winWidth || clampedHeight != winHeight)
+					SDL.SDL_SetWindowSize(Window, clampedWidth, clampedHeight);
+			}
+
+			WindowSizeChanged();
+		}
+
 		internal void WindowSizeChanged()
 		{
-			// The ratio between pixels and points can change when moving between displays in OSX
-			// We need to recalculate our scale to account for the potential change in the actual rendered area
+			// The window size and ratio between pixels and points can change when
+			// resizing or moving between displays in OSX.
+			// We need to recalculate our size and scale to account for the potential change in the actual rendered area.
 			if (Platform.CurrentPlatform == PlatformType.OSX)
 			{
+				SDL.SDL_GetWindowSize(Window, out var winWidth, out var winHeight);
 				SDL.SDL_GL_GetDrawableSize(Window, out var width, out var height);
 
-				if (width != SurfaceSize.Width || height != SurfaceSize.Height)
+				if (winWidth <= 0 || winHeight <= 0 || width <= 0 || height <= 0)
+					return;
+
+				if (winWidth != NativeWindowSize.Width || winHeight != NativeWindowSize.Height ||
+					width != SurfaceSize.Width || height != SurfaceSize.Height)
 				{
 					float oldScale;
+					Size oldEffectiveSize;
+					Size newEffectiveSize;
 					lock (syncObject)
 					{
 						oldScale = windowScale;
+						oldEffectiveSize = EffectiveWindowSize;
+						windowSize = new Size(winWidth, winHeight);
 						surfaceSize = new Size(width, height);
-						windowScale = width * 1f / windowSize.Width;
+						windowScale = windowMode == WindowMode.Fullscreen ? 1f : width * 1f / windowSize.Width;
+						newEffectiveSize = EffectiveWindowSize;
+					}
+
+					if (oldEffectiveSize.Width > 0 && oldEffectiveSize.Height > 0 && newEffectiveSize != oldEffectiveSize)
+					{
+						Graphics.Viewport.LastMousePos = new int2(
+							Graphics.Viewport.LastMousePos.X * newEffectiveSize.Width / oldEffectiveSize.Width,
+							Graphics.Viewport.LastMousePos.Y * newEffectiveSize.Height / oldEffectiveSize.Height);
 					}
 
 					OnWindowScaleChanged(oldScale, oldScale * scaleModifier, windowScale, windowScale * scaleModifier);

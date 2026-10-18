@@ -164,6 +164,11 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 			SetMaximumVisibleRows(palette);
 		}
 
+		public override void OnWindowSizeChanged()
+		{
+			SetMaximumVisibleRows(palette);
+		}
+
 		static void SetMaximumVisibleRows(ProductionPaletteWidget productionPalette)
 		{
 			var screenHeight = Game.Renderer.Resolution.Height;

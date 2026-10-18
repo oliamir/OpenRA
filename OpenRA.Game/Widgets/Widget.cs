@@ -180,6 +180,16 @@ namespace OpenRA.Widgets
 				Viewport.LastMousePos, int2.Zero, Modifiers.None, 0));
 		}
 
+		public static void RecalculateWidgetLayout()
+		{
+			Root.RecalculateLayout();
+			foreach (var window in WindowList)
+				if (window.Parent == Root && !Root.Children.Contains(window))
+					window.RecalculateLayout();
+
+			ResetTooltips();
+		}
+
 		public static void Subscribe<T>(T instance)
 		{
 			Mediator.Subscribe(instance);
@@ -199,6 +209,7 @@ namespace OpenRA.Widgets
 		public virtual void Tick() { }
 		public virtual void BecameHidden() { }
 		public virtual void BecameVisible() { }
+		public virtual void OnWindowSizeChanged() { }
 		protected virtual void Dispose(bool disposing) { }
 	}
 
@@ -219,6 +230,7 @@ namespace OpenRA.Widgets
 	public abstract class Widget
 	{
 		string defaultCursor = null;
+		Dictionary<string, int> customSubstitutions;
 
 		public readonly List<Widget> Children = [];
 
@@ -259,6 +271,8 @@ namespace OpenRA.Widgets
 			IgnoreMouseOver = widget.IgnoreMouseOver;
 
 			defaultCursor = widget.defaultCursor;
+			if (widget.customSubstitutions != null)
+				customSubstitutions = new Dictionary<string, int>(widget.customSubstitutions);
 
 			foreach (var child in widget.Children)
 				AddChild(child.Clone());
@@ -298,8 +312,12 @@ namespace OpenRA.Widgets
 				? new WidgetBounds(0, 0, Game.Renderer.Resolution.Width, Game.Renderer.Resolution.Height)
 				: Parent.Bounds;
 
-			var substitutions = args.TryGetValue("substitutions", out var subs) ?
+			customSubstitutions = args.TryGetValue("substitutions", out var subs) ?
 				new Dictionary<string, int>((Dictionary<string, int>)subs) :
+				null;
+
+			var substitutions = customSubstitutions != null ?
+				new Dictionary<string, int>(customSubstitutions) :
 				[];
 
 			substitutions.Add("WINDOW_WIDTH", Game.Renderer.Resolution.Width);
@@ -317,6 +335,51 @@ namespace OpenRA.Widgets
 			var x = X?.Evaluate(readOnlySubstitutions) ?? 0;
 			var y = Y?.Evaluate(readOnlySubstitutions) ?? 0;
 			Bounds = new WidgetBounds(x, y, width, height);
+		}
+
+		public virtual void RecalculateLayout(bool insideScrollPanel = false)
+		{
+			var resolution = Game.Renderer != null ? Game.Renderer.Resolution : default;
+			var parentBounds = (Parent == null)
+				? new WidgetBounds(0, 0, resolution.Width, resolution.Height)
+				: Parent.Bounds;
+
+			var substitutions = customSubstitutions != null ?
+				new Dictionary<string, int>(customSubstitutions) :
+				[];
+
+			substitutions.Add("WINDOW_WIDTH", resolution.Width);
+			substitutions.Add("WINDOW_HEIGHT", resolution.Height);
+			substitutions.Add("PARENT_WIDTH", parentBounds.Width);
+			substitutions.Add("PARENT_HEIGHT", parentBounds.Height);
+
+			var readOnlySubstitutions = new ReadOnlyDictionary<string, int>(substitutions);
+			var width = Width?.Evaluate(readOnlySubstitutions) ?? Bounds.Width;
+			var height = Height?.Evaluate(readOnlySubstitutions) ?? Bounds.Height;
+
+			substitutions.Add("WIDTH", width);
+			substitutions.Add("HEIGHT", height);
+
+			if (insideScrollPanel)
+				Bounds = new WidgetBounds(Bounds.X, Bounds.Y, width, Bounds.Height);
+			else
+				Bounds = new WidgetBounds(
+					X?.Evaluate(readOnlySubstitutions) ?? Bounds.X,
+					Y?.Evaluate(readOnlySubstitutions) ?? Bounds.Y,
+					width,
+					height);
+
+			RecalculateChildrenLayout(insideScrollPanel);
+
+			if (LogicObjects != null)
+				foreach (var l in LogicObjects)
+					l.OnWindowSizeChanged();
+		}
+
+		protected virtual void RecalculateChildrenLayout(bool insideScrollPanel)
+		{
+			foreach (var child in Children)
+				child.RecalculateLayout(insideScrollPanel);
 		}
 
 		public void PostInit(WidgetArgs args)

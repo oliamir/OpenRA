@@ -524,5 +524,11 @@ namespace OpenRA.Mods.Common.Widgets
 					BindingAddImpl(item);
 			});
 		}
+
+		protected override void RecalculateChildrenLayout(bool insideScrollPanel)
+		{
+			base.RecalculateChildrenLayout(true);
+			Layout?.AdjustChildren();
+		}
 	}
 }

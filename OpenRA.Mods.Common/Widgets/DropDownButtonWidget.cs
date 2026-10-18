@@ -123,6 +123,12 @@ namespace OpenRA.Mods.Common.Widgets
 			Ui.ResetTooltips();
 		}
 
+		public override void RecalculateLayout(bool insideScrollPanel = false)
+		{
+			RemovePanel();
+			base.RecalculateLayout(insideScrollPanel);
+		}
+
 		public void AttachPanel(Widget p) { AttachPanel(p, null); }
 		public void AttachPanel(Widget p, Action onCancel)
 		{

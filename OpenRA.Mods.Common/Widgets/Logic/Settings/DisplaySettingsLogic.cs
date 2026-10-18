@@ -12,7 +12,6 @@
 using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using OpenRA.Graphics;
@@ -223,12 +222,9 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 			uiScaleDropdown.GetText = () => uiScaleLabel.Update(graphicSettings.UIScale);
 
 			var minResolution = viewportSizes.MinEffectiveResolution;
-			var resolution = Game.Renderer.Resolution;
-			var disableUIScale = world.Type != WorldType.Shellmap ||
-				resolution.Width * graphicSettings.UIScale < 1.25f * minResolution.Width ||
-				resolution.Height * graphicSettings.UIScale < 1.25f * minResolution.Height;
-
-			uiScaleDropdown.IsDisabled = () => disableUIScale;
+			uiScaleDropdown.IsDisabled = () =>
+				Game.Renderer.NativeResolution.Width < 1.25f * minResolution.Width ||
+				Game.Renderer.NativeResolution.Height < 1.25f * minResolution.Height;
 
 			panel.Get("DISPLAY_SELECTION_CONTAINER").IsVisible = () => graphicSettings.Mode != WindowMode.Windowed;
 			panel.Get("WINDOW_RESOLUTION_CONTAINER").IsVisible = () => graphicSettings.Mode == WindowMode.Windowed;
@@ -306,7 +302,7 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 					var oldScale = graphicSettings.UIScale;
 					graphicSettings.UIScale = defaultGraphicSettings.UIScale;
 					Game.Renderer.SetUIScale(defaultGraphicSettings.UIScale);
-					RecalculateWidgetLayout(Ui.Root);
+					Ui.RecalculateWidgetLayout();
 					Viewport.LastMousePos = int2.FromVector(Viewport.LastMousePos.ToVector2() * oldScale / graphicSettings.UIScale);
 				}
 
@@ -498,48 +494,6 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 			dropdown.ShowDropDown("LABEL_DROPDOWN_TEMPLATE", 500, validSizes, SetupItem);
 		}
 
-		static void RecalculateWidgetLayout(Widget w, bool insideScrollPanel = false)
-		{
-			// HACK: Recalculate the widget bounds to fit within the new effective window bounds
-			// This is fragile, and only works when called when Settings is opened via the main menu.
-
-			// HACK: Skip children badges container on the main menu and settings tab container
-			// These have a fixed size, with calculated size and children positions that break if we adjust them here
-			if (w.Id == "BADGES_CONTAINER" || w.Id == "SETTINGS_TAB_CONTAINER")
-				return;
-
-			var parentBounds = w.Parent == null
-				? new WidgetBounds(0, 0, Game.Renderer.Resolution.Width, Game.Renderer.Resolution.Height)
-				: w.Parent.Bounds;
-
-			var substitutions = new Dictionary<string, int>
-			{
-				{ "WINDOW_WIDTH", Game.Renderer.Resolution.Width },
-				{ "WINDOW_HEIGHT", Game.Renderer.Resolution.Height },
-				{ "PARENT_WIDTH", parentBounds.Width },
-				{ "PARENT_HEIGHT", parentBounds.Height }
-			};
-
-			var readOnlySubstitutions = new ReadOnlyDictionary<string, int>(substitutions);
-			var width = w.Width?.Evaluate(readOnlySubstitutions) ?? 0;
-			var height = w.Height?.Evaluate(readOnlySubstitutions) ?? 0;
-
-			substitutions.Add("WIDTH", width);
-			substitutions.Add("HEIGHT", height);
-
-			if (insideScrollPanel)
-				w.Bounds = new WidgetBounds(w.Bounds.X, w.Bounds.Y, width, w.Bounds.Height);
-			else
-				w.Bounds = new WidgetBounds(
-					w.X?.Evaluate(readOnlySubstitutions) ?? 0,
-					w.Y?.Evaluate(readOnlySubstitutions) ?? 0,
-					width,
-					height);
-
-			foreach (var c in w.Children)
-				RecalculateWidgetLayout(c, insideScrollPanel || w is ScrollPanelWidget);
-		}
-
 		public static void ShowUIScaleDropdown(DropDownButtonWidget dropdown, GraphicSettings graphicSettings)
 		{
 			ScrollItemWidget SetupItem(float o, ScrollItemWidget itemTemplate)
@@ -554,7 +508,7 @@ namespace OpenRA.Mods.Common.Widgets.Logic
 							graphicSettings.UIScale = o;
 
 							Game.Renderer.SetUIScale(o);
-							RecalculateWidgetLayout(Ui.Root);
+							Ui.RecalculateWidgetLayout();
 							Viewport.LastMousePos = int2.FromVector(Viewport.LastMousePos.ToVector2() * oldScale / graphicSettings.UIScale);
 						});
 					});

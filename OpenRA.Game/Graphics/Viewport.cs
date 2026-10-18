@@ -65,12 +65,14 @@ namespace OpenRA.Graphics
 		bool allCellsDirty = true;
 
 		WorldViewport lastViewportDistance;
+		Size lastNativeResolution;
 
 		float zoom = 1f;
 		bool unlockMinZoom;
 		float unlockedMinZoomScale;
 		float unlockedMinZoom = 1f;
 		float defaultScale;
+		float overriddenHeight;
 		bool overrideUserScale;
 
 		public Func<Vector2> ViewportCenterProvider;
@@ -94,7 +96,7 @@ namespace OpenRA.Graphics
 
 		public void OverrideDefaultHeight(float height)
 		{
-			defaultScale = viewportSizes.DefaultScale * Game.Renderer.NativeResolution.Height / height;
+			overriddenHeight = height;
 			overrideUserScale = true;
 			UpdateViewportZooms(false);
 		}
@@ -184,6 +186,8 @@ namespace OpenRA.Graphics
 		{
 			if (lastViewportDistance != graphicSettings.ViewportDistance)
 				UpdateViewportZooms();
+			else if (lastNativeResolution != Game.Renderer.NativeResolution)
+				UpdateViewportZooms(false);
 
 			if (ViewportCenterProvider != null)
 				Center(ViewportCenterProvider());
@@ -224,6 +228,10 @@ namespace OpenRA.Graphics
 		void UpdateViewportZooms(bool resetCurrentZoom = true)
 		{
 			lastViewportDistance = graphicSettings.ViewportDistance;
+			lastNativeResolution = Game.Renderer.NativeResolution;
+
+			if (overrideUserScale)
+				defaultScale = viewportSizes.DefaultScale * lastNativeResolution.Height / overriddenHeight;
 
 			var vd = graphicSettings.ViewportDistance;
 			if (overrideUserScale || (viewportSizes.AllowNativeZoom && vd == WorldViewport.Native))

@@ -78,6 +78,12 @@ namespace OpenRA.Platforms.Default
 
 						break;
 
+					case SDL.SDL_EventType.SDL_DISPLAYEVENT:
+					{
+						device.DisplayChanged();
+						break;
+					}
+
 					case SDL.SDL_EventType.SDL_WINDOWEVENT:
 					{
 						switch (e.window.windowEvent)
@@ -90,9 +96,19 @@ namespace OpenRA.Platforms.Default
 								device.HasInputFocus = true;
 								break;
 
-							// Triggered when moving between displays with different DPI settings
+							// Triggered when resizing or moving between displays with different DPI/resolution settings
+							case SDL.SDL_WindowEventID.SDL_WINDOWEVENT_RESIZED:
 							case SDL.SDL_WindowEventID.SDL_WINDOWEVENT_SIZE_CHANGED:
 								device.WindowSizeChanged();
+								break;
+
+							case SDL.SDL_WindowEventID.SDL_WINDOWEVENT_MOVED:
+								device.DisplayChanged(true);
+								break;
+
+							case SDL.SDL_WindowEventID.SDL_WINDOWEVENT_ICCPROF_CHANGED:
+							case SDL.SDL_WindowEventID.SDL_WINDOWEVENT_DISPLAY_CHANGED:
+								device.DisplayChanged();
 								break;
 
 							case SDL.SDL_WindowEventID.SDL_WINDOWEVENT_HIDDEN:

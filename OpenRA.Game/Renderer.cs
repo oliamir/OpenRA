@@ -152,6 +152,8 @@ namespace OpenRA
 
 					foreach (var f in Fonts)
 						f.Value.SetScale(newEffective);
+
+					Widgets.Ui.RecalculateWidgetLayout();
 				});
 			};
 		}
@@ -183,6 +185,7 @@ namespace OpenRA
 				// Flip sprite in Y to match OpenGL's bottom-left origin
 				var screenBounds = Rectangle.FromLTRB(0, surfaceSize.Height, surfaceSize.Width, 0);
 				screenSprite = new Sprite(screenSheet, screenBounds, TextureChannel.RGBA);
+				worldSprite = null;
 			}
 
 			// In HiDPI windows we follow Apple's convention of defining window coordinates as for standard resolution windows
