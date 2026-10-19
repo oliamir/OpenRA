@@ -52,5 +52,7 @@
 	<false/>
 	<key>NSPrefersDisplaySafeAreaCompatibilityMode</key>
 	<false/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 </dict>
 </plist>

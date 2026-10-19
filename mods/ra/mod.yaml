@@ -5,7 +5,7 @@ Metadata:
 	WebIcon32: https://www.openra.net/images/icons/ra_32x32.png
 	WindowTitle: mod-windowtitle
 
-PackageFormats: Mix
+PackageFormats: Mix, MegV3, ZipFile
 
 FileSystem: ContentInstallerFileSystem
 	SystemPackages:
@@ -39,6 +39,9 @@ FileSystem: ContentInstallerFileSystem
 		# Below are mod-provided (system) packages that need to be loaded after the content packages so they can override content assets.
 		ra|bits
 		ra|bits/desert
+		~content|TEXTURES_RA_SRGB.MEG
+		~content|TEXTURES_COMMON_SRGB.MEG
+		~content|remaster
 	RequiredContentFiles:
 		content|expand/chrotnk1.aud
 		content|expand/fixit1.aud
@@ -270,7 +273,7 @@ SupportsMapsFrom: ra
 
 SoundFormats: Aud, Wav
 
-SpriteFormats: ShpD2, ShpTD, TmpRA, TmpTD, ShpTS
+SpriteFormats: ShpD2, ShpTD, TmpRA, TmpTD, ShpTS, ShpRemastered, Tga, PngSheet
 
 VideoFormats: Vqa, Wsa
 

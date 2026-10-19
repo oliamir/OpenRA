@@ -23,6 +23,14 @@ namespace OpenRA.Platforms.Default
 {
 	sealed class Sdl2PlatformWindow : ThreadAffine, IPlatformWindow
 	{
+		const ulong NSWindowStyleMaskFullScreen = 1UL << 14;
+
+		static IntPtr selScreen;
+		static IntPtr selBackingScaleFactor;
+		static IntPtr selStyleMask;
+		static IntPtr selDelegate;
+		static IntPtr selWindowDidResize;
+
 		readonly Sdl2Input input;
 
 		public IGraphicsContext Context { get; }
@@ -34,8 +42,15 @@ namespace OpenRA.Platforms.Default
 		WindowMode windowMode;
 		Size windowSize;
 		Size surfaceSize;
+		Size osWindowSize;
+		Size drawableSize;
+		Size customFullscreenSize;
 		float windowScale = 1f;
 		int lastDisplayIndex;
+		long nsWindow;
+		long lastNSScreen;
+		double lastBackingScale;
+		bool lastIsMacFullScreenSpace;
 		int2? lockedMousePosition;
 		float scaleModifier;
 		readonly GLProfile profile;
@@ -95,6 +110,24 @@ namespace OpenRA.Platforms.Default
 			}
 		}
 
+		internal Size OSWindowSize
+		{
+			get
+			{
+				lock (syncObject)
+					return osWindowSize;
+			}
+		}
+
+		internal Size DrawableSize
+		{
+			get
+			{
+				lock (syncObject)
+					return drawableSize;
+			}
+		}
+
 		public int CurrentDisplay => SDL.SDL_GetWindowDisplayIndex(window);
 
 		public int DisplayCount => SDL.SDL_GetNumVideoDisplays();
@@ -134,6 +167,21 @@ namespace OpenRA.Platforms.Default
 
 		[DllImport("libX11")]
 		static extern IntPtr XFlush(IntPtr display);
+
+		[DllImport("/usr/lib/libobjc.A.dylib")]
+		static extern IntPtr sel_registerName(string name);
+
+		[DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+		static extern IntPtr objc_msgSend_IntPtr(IntPtr receiver, IntPtr selector);
+
+		[DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+		static extern ulong objc_msgSend_ulong(IntPtr receiver, IntPtr selector);
+
+		[DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+		static extern double objc_msgSend_double(IntPtr receiver, IntPtr selector);
+
+		[DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+		static extern void objc_msgSend_void_IntPtr(IntPtr receiver, IntPtr selector, IntPtr arg1);
 
 		public Sdl2PlatformWindow(Size requestEffectiveWindowSize, WindowMode windowMode,
 			float scaleModifier, int vertexBatchSize, int indexBatchSize, int videoDisplay, GLProfile requestProfile)
@@ -221,15 +269,19 @@ namespace OpenRA.Platforms.Default
 				if (requestEffectiveWindowSize.Width == 0 && requestEffectiveWindowSize.Height == 0)
 				{
 					Console.WriteLine("No custom resolution provided, using desktop resolution");
-					surfaceSize = windowSize = new Size(display.w, display.h);
+					drawableSize = surfaceSize = osWindowSize = windowSize = new Size(display.w, display.h);
 				}
 				else
-					surfaceSize = windowSize = new Size((int)(requestEffectiveWindowSize.Width * windowScale), (int)(requestEffectiveWindowSize.Height * windowScale));
+				{
+					var w = (int)(requestEffectiveWindowSize.Width * windowScale);
+					var h = (int)(requestEffectiveWindowSize.Height * windowScale);
+					drawableSize = surfaceSize = osWindowSize = windowSize = new Size(w, h);
+				}
 
 				Console.WriteLine($"Using resolution: {windowSize.Width}x{windowSize.Height}");
 
 				var windowFlags = SDL.SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL.SDL_WindowFlags.SDL_WINDOW_ALLOW_HIGHDPI;
-				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode == WindowMode.Windowed)
+				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode != WindowMode.Fullscreen)
 					windowFlags |= SDL.SDL_WindowFlags.SDL_WINDOW_RESIZABLE;
 
 				// HiDPI doesn't work properly on OSX with (legacy) fullscreen mode
@@ -239,7 +291,7 @@ namespace OpenRA.Platforms.Default
 				window = SDL.SDL_CreateWindow("OpenRA", SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay),
 					windowSize.Width, windowSize.Height, windowFlags);
 
-				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode == WindowMode.Windowed)
+				if (Platform.CurrentPlatform == PlatformType.OSX && windowMode != WindowMode.Fullscreen)
 					SDL.SDL_SetWindowMinimumSize(Window, 640, 480);
 
 				if (Platform.CurrentPlatform == PlatformType.Linux)
@@ -278,7 +330,8 @@ namespace OpenRA.Platforms.Default
 					// OSX defines the window size in "points", with a device-dependent number of pixels per point.
 					// The window scale is simply the ratio of GL pixels / window points.
 					SDL.SDL_GL_GetDrawableSize(Window, out var width, out var height);
-					surfaceSize = new Size(width, height);
+					drawableSize = surfaceSize = new Size(width, height);
+					osWindowSize = windowSize;
 					windowScale = width * 1f / windowSize.Width;
 
 					// SDL expects OpenGL Context to be on the main thread on OSX by default.
@@ -286,7 +339,7 @@ namespace OpenRA.Platforms.Default
 					SDL.SDL_SetHint(SDL.SDL_HINT_MAC_OPENGL_ASYNC_DISPATCH, "1");
 				}
 				else
-					windowSize = new Size((int)(surfaceSize.Width / windowScale), (int)(surfaceSize.Height / windowScale));
+					osWindowSize = windowSize = new Size((int)(surfaceSize.Width / windowScale), (int)(surfaceSize.Height / windowScale));
 
 				if (Game.Settings.Game.LockMouseWindow)
 					GrabWindowMouseFocus();
@@ -306,7 +359,7 @@ namespace OpenRA.Platforms.Default
 					if (Platform.CurrentPlatform == PlatformType.OSX)
 					{
 						SDL.SDL_GetWindowSize(Window, out var width, out var height);
-						windowSize = surfaceSize = new Size(width, height);
+						drawableSize = surfaceSize = osWindowSize = windowSize = new Size(width, height);
 						windowScale = 1;
 					}
 				}
@@ -331,16 +384,19 @@ namespace OpenRA.Platforms.Default
 						SDL.SDL_GetWindowSize(Window, out var width, out var height);
 						if (width != windowSize.Width || height != windowSize.Height)
 						{
-							windowSize = new Size(width, height);
+							osWindowSize = windowSize = new Size(width, height);
 
 							SDL.SDL_GL_GetDrawableSize(Window, out width, out height);
-							surfaceSize = new Size(width, height);
+							drawableSize = surfaceSize = new Size(width, height);
 							windowScale = width * 1f / windowSize.Width;
 
 							Console.WriteLine($"Using new resolution: {windowSize.Width}x{windowSize.Height}");
 						}
 					}
 				}
+
+				if (Platform.CurrentPlatform == PlatformType.OSX)
+					InitOSXWindowTracking();
 
 				lastDisplayIndex = CurrentDisplay;
 				Console.WriteLine($"Using window scale {windowScale:F2}");
@@ -363,6 +419,114 @@ namespace OpenRA.Platforms.Default
 
 			SDL.SDL_SetModState(SDL.SDL_Keymod.KMOD_NONE);
 			input = new Sdl2Input();
+		}
+
+		void InitOSXWindowTracking()
+		{
+			try
+			{
+				selScreen = sel_registerName("screen");
+				selBackingScaleFactor = sel_registerName("backingScaleFactor");
+				selStyleMask = sel_registerName("styleMask");
+				selDelegate = sel_registerName("delegate");
+				selWindowDidResize = sel_registerName("windowDidResize:");
+
+				var info = default(SDL.SDL_SysWMinfo);
+				SDL.SDL_VERSION(out info.version);
+				if (SDL.SDL_GetWindowWMInfo(Window, ref info) == SDL.SDL_bool.SDL_TRUE)
+				{
+					var ptr = info.info.cocoa.window;
+					nsWindow = ptr.ToInt64();
+					if (ptr != IntPtr.Zero)
+					{
+						lastNSScreen = objc_msgSend_IntPtr(ptr, selScreen).ToInt64();
+						lastBackingScale = objc_msgSend_double(ptr, selBackingScaleFactor);
+						lastIsMacFullScreenSpace = (objc_msgSend_ulong(ptr, selStyleMask) & NSWindowStyleMaskFullScreen) != 0;
+					}
+				}
+			}
+			catch { }
+		}
+
+		void NotifyOSXWindowResized()
+		{
+			if (nsWindow == 0 || selDelegate == IntPtr.Zero || selWindowDidResize == IntPtr.Zero)
+				return;
+
+			try
+			{
+				var nsDelegate = objc_msgSend_IntPtr(new IntPtr(nsWindow), selDelegate);
+				if (nsDelegate != IntPtr.Zero)
+					objc_msgSend_void_IntPtr(nsDelegate, selWindowDidResize, IntPtr.Zero);
+			}
+			catch { }
+		}
+
+		void CheckOSXWindowState()
+		{
+			if (Platform.CurrentPlatform != PlatformType.OSX || nsWindow == 0)
+				return;
+
+			var nsWinPtr = new IntPtr(nsWindow);
+			var currentScreen = objc_msgSend_IntPtr(nsWinPtr, selScreen).ToInt64();
+			var backingScale = objc_msgSend_double(nsWinPtr, selBackingScaleFactor);
+			var isMacFullScreenSpace = (objc_msgSend_ulong(nsWinPtr, selStyleMask) & NSWindowStyleMaskFullScreen) != 0;
+
+			var screenChanged = currentScreen != 0 && currentScreen != lastNSScreen;
+			var scaleChanged = backingScale > 0 && Math.Abs(backingScale - lastBackingScale) > 0.001;
+			var spaceChanged = isMacFullScreenSpace != lastIsMacFullScreenSpace;
+
+			if (currentScreen != 0)
+				lastNSScreen = currentScreen;
+			if (backingScale > 0)
+				lastBackingScale = backingScale;
+			lastIsMacFullScreenSpace = isMacFullScreenSpace;
+
+			if (spaceChanged)
+			{
+				lock (syncObject)
+				{
+					if (isMacFullScreenSpace && windowMode == WindowMode.Windowed)
+					{
+						windowMode = WindowMode.PseudoFullscreen;
+						if (Game.Settings?.Graphics != null)
+							Game.Settings.Graphics.Mode = WindowMode.PseudoFullscreen;
+					}
+					else if (!isMacFullScreenSpace && windowMode == WindowMode.PseudoFullscreen)
+					{
+						windowMode = WindowMode.Windowed;
+						customFullscreenSize = default;
+						if (Game.Settings?.Graphics != null)
+							Game.Settings.Graphics.Mode = WindowMode.Windowed;
+					}
+				}
+			}
+
+			if (screenChanged)
+			{
+				lock (syncObject)
+					customFullscreenSize = default;
+			}
+
+			SDL.SDL_GL_GetDrawableSize(Window, out var drawW, out var drawH);
+			SDL.SDL_GetWindowSize(Window, out var sdlWinW, out var sdlWinH);
+			var liveWinW = backingScale > 0 && windowMode != WindowMode.Fullscreen
+				? (int)Math.Round(drawW / backingScale)
+				: drawW;
+			var liveWinH = backingScale > 0 && windowMode != WindowMode.Fullscreen
+				? (int)Math.Round(drawH / backingScale)
+				: drawH;
+
+			if (screenChanged || scaleChanged || spaceChanged ||
+				drawW != DrawableSize.Width || drawH != DrawableSize.Height ||
+				sdlWinW != liveWinW || sdlWinH != liveWinH)
+			{
+				NotifyOSXWindowResized();
+				if (screenChanged)
+					DisplayChanged();
+				else
+					WindowSizeChanged();
+			}
 		}
 
 		static byte[] DoublePixelData(byte[] data, Size size)
@@ -460,6 +624,12 @@ namespace OpenRA.Platforms.Default
 			if (displayIndex >= 0)
 				lastDisplayIndex = displayIndex;
 
+			if (displayChanged)
+			{
+				lock (syncObject)
+					customFullscreenSize = default;
+			}
+
 			if ((!checkDisplayChangeOnly || displayChanged) &&
 				windowMode == WindowMode.Windowed && displayIndex >= 0 &&
 				SDL.SDL_GetDisplayUsableBounds(displayIndex, out var bounds) == 0)
@@ -471,6 +641,7 @@ namespace OpenRA.Platforms.Default
 					SDL.SDL_SetWindowSize(Window, clampedWidth, clampedHeight);
 			}
 
+			NotifyOSXWindowResized();
 			WindowSizeChanged();
 		}
 
@@ -481,11 +652,49 @@ namespace OpenRA.Platforms.Default
 			// We need to recalculate our size and scale to account for the potential change in the actual rendered area.
 			if (Platform.CurrentPlatform == PlatformType.OSX)
 			{
-				SDL.SDL_GetWindowSize(Window, out var winWidth, out var winHeight);
-				SDL.SDL_GL_GetDrawableSize(Window, out var width, out var height);
+				SDL.SDL_GetWindowSize(Window, out var osWinWidth, out var osWinHeight);
+				SDL.SDL_GL_GetDrawableSize(Window, out var drawWidth, out var drawHeight);
 
-				if (winWidth <= 0 || winHeight <= 0 || width <= 0 || height <= 0)
+				if (osWinWidth <= 0 || osWinHeight <= 0 || drawWidth <= 0 || drawHeight <= 0)
 					return;
+
+				if (nsWindow != 0 && selBackingScaleFactor != IntPtr.Zero && windowMode != WindowMode.Fullscreen)
+				{
+					var backingScale = objc_msgSend_double(new IntPtr(nsWindow), selBackingScaleFactor);
+					if (backingScale > 0)
+					{
+						var liveWinW = (int)Math.Round(drawWidth / backingScale);
+						var liveWinH = (int)Math.Round(drawHeight / backingScale);
+						if (liveWinW > 0 && liveWinH > 0)
+						{
+							osWinWidth = liveWinW;
+							osWinHeight = liveWinH;
+						}
+					}
+				}
+
+				int winWidth, winHeight, width, height;
+				lock (syncObject)
+				{
+					osWindowSize = new Size(osWinWidth, osWinHeight);
+					drawableSize = new Size(drawWidth, drawHeight);
+
+					if (windowMode != WindowMode.Windowed && customFullscreenSize.Width > 0 && customFullscreenSize.Height > 0)
+					{
+						var nativeScale = windowMode == WindowMode.Fullscreen ? 1f : drawWidth * 1f / osWinWidth;
+						winWidth = customFullscreenSize.Width;
+						winHeight = customFullscreenSize.Height;
+						width = Math.Max(1, (int)Math.Round(winWidth * nativeScale));
+						height = Math.Max(1, (int)Math.Round(winHeight * nativeScale));
+					}
+					else
+					{
+						winWidth = osWinWidth;
+						winHeight = osWinHeight;
+						width = drawWidth;
+						height = drawHeight;
+					}
+				}
 
 				if (winWidth != NativeWindowSize.Width || winHeight != NativeWindowSize.Height ||
 					width != SurfaceSize.Width || height != SurfaceSize.Height)
@@ -545,6 +754,7 @@ namespace OpenRA.Platforms.Default
 		public void PumpInput(IInputHandler inputHandler)
 		{
 			VerifyThreadAffinity();
+			CheckOSXWindowState();
 			input.PumpInput(this, inputHandler, lockedMousePosition);
 
 			if (lockedMousePosition.HasValue)
@@ -680,6 +890,15 @@ namespace OpenRA.Platforms.Default
 
 			if (mode == WindowMode.Windowed)
 			{
+				lock (syncObject)
+					customFullscreenSize = default;
+
+				if (nsWindow != 0 && selStyleMask != IntPtr.Zero &&
+					(objc_msgSend_ulong(new IntPtr(nsWindow), selStyleMask) & NSWindowStyleMaskFullScreen) != 0)
+				{
+					SDL.SDL_SetWindowFullscreen(Window, (uint)SDL.SDL_WindowFlags.SDL_WINDOW_FULLSCREEN_DESKTOP);
+				}
+
 				SDL.SDL_SetWindowFullscreen(Window, 0);
 				SDL.SDL_SetWindowResizable(Window, SDL.SDL_bool.SDL_TRUE);
 				SDL.SDL_SetWindowMinimumSize(Window, 640, 480);
@@ -704,7 +923,8 @@ namespace OpenRA.Platforms.Default
 			}
 			else if (mode == WindowMode.PseudoFullscreen)
 			{
-				if (CurrentDisplay != videoDisplay)
+				SDL.SDL_SetWindowResizable(Window, SDL.SDL_bool.SDL_TRUE);
+				if (CurrentDisplay >= 0 && CurrentDisplay != videoDisplay && videoDisplay != lastDisplayIndex)
 				{
 					SDL.SDL_SetWindowFullscreen(Window, 0);
 					SDL.SDL_SetWindowPosition(Window, SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay));
@@ -712,19 +932,39 @@ namespace OpenRA.Platforms.Default
 
 				SDL.SDL_SetWindowFullscreen(Window, (uint)SDL.SDL_WindowFlags.SDL_WINDOW_FULLSCREEN_DESKTOP);
 				SDL.SDL_SetHint(SDL.SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+
+				lock (syncObject)
+				{
+					customFullscreenSize = windowedSize.Width > 0 && windowedSize.Height > 0 &&
+						(windowedSize.Width != osWindowSize.Width || windowedSize.Height != osWindowSize.Height)
+						? windowedSize
+						: default;
+				}
 			}
 			else if (mode == WindowMode.Fullscreen)
 			{
-				if (CurrentDisplay != videoDisplay)
+				if (CurrentDisplay >= 0 && CurrentDisplay != videoDisplay && videoDisplay != lastDisplayIndex)
 				{
 					SDL.SDL_SetWindowFullscreen(Window, 0);
 					SDL.SDL_SetWindowPosition(Window, SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay), SDL.SDL_WINDOWPOS_CENTERED_DISPLAY(videoDisplay));
 				}
 
 				SDL.SDL_SetWindowFullscreen(Window, (uint)SDL.SDL_WindowFlags.SDL_WINDOW_FULLSCREEN);
+
+				lock (syncObject)
+				{
+					customFullscreenSize = windowedSize.Width > 0 && windowedSize.Height > 0 &&
+						(windowedSize.Width != osWindowSize.Width || windowedSize.Height != osWindowSize.Height)
+						? windowedSize
+						: default;
+				}
 			}
 
+			if (nsWindow != 0 && selStyleMask != IntPtr.Zero)
+				lastIsMacFullScreenSpace = (objc_msgSend_ulong(new IntPtr(nsWindow), selStyleMask) & NSWindowStyleMaskFullScreen) != 0;
+
 			lastDisplayIndex = CurrentDisplay;
+			NotifyOSXWindowResized();
 			WindowSizeChanged();
 		}
 	}

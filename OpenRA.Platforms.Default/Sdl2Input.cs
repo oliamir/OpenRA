@@ -51,11 +51,17 @@ namespace OpenRA.Platforms.Default
 				return new int2((int)(Math.Sign(x) / 2f + x * s), (int)(Math.Sign(x) / 2f + y * s));
 			}
 
-			// On macOS we must still account for the user-requested scale modifier
-			if (Platform.CurrentPlatform == PlatformType.OSX && device.EffectiveWindowScale != device.NativeWindowScale)
+			// On macOS we must account for the user-requested scale modifier or custom fullscreen resolution
+			if (Platform.CurrentPlatform == PlatformType.OSX)
 			{
-				var s = device.NativeWindowScale / device.EffectiveWindowScale;
-				return new int2((int)(Math.Sign(x) / 2f + x * s), (int)(Math.Sign(x) / 2f + y * s));
+				var osSize = device.OSWindowSize;
+				var effSize = device.EffectiveWindowSize;
+				if (osSize.Width > 0 && osSize.Height > 0 && effSize != osSize)
+				{
+					var sx = effSize.Width * 1f / osSize.Width;
+					var sy = effSize.Height * 1f / osSize.Height;
+					return new int2((int)(Math.Sign(x) / 2f + x * sx), (int)(Math.Sign(y) / 2f + y * sy));
+				}
 			}
 
 			return new int2(x, y);
