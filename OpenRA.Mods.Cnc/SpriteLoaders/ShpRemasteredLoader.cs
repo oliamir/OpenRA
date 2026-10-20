@@ -48,7 +48,6 @@ namespace OpenRA.Mods.Cnc.SpriteLoaders
 
 	public class ShpRemasteredSprite
 	{
-		static readonly Regex FilenameRegex = new(@"^(?<prefix>.+?[\-_])(?<frame>\d{4})\.tga$");
 		static readonly Regex MetaRegex = new(
 			@"^\{""size"":\s*\[\s*(?<width>\d+)\s*,\s*(?<height>\d+)\s*\]," +
 			@"\s*""crop"":\s*\[\s*(?<left>\d+)\s*,\s*(?<top>\d+)\s*,\s*(?<right>\d+)\s*,\s*(?<bottom>\d+)\s*\]\s*\}$");
@@ -64,36 +63,17 @@ namespace OpenRA.Mods.Cnc.SpriteLoaders
 		{
 			var container = new ZipFile(stream);
 
-			string framePrefix = null;
-			var frameCount = 0;
-			foreach (ZipEntry entry in container)
-			{
-				var match = FilenameRegex.Match(entry.Name);
-				if (!match.Success)
-					continue;
+			var tgaEntries = container.OfType<ZipEntry>()
+				.Where(entry => entry.Name.EndsWith(".tga", StringComparison.OrdinalIgnoreCase))
+				.OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+				.ToArray();
 
-				var prefix = match.Groups["prefix"].Value;
-				framePrefix ??= prefix;
-
-				if (prefix != framePrefix)
-					throw new InvalidDataException($"Frame prefix mismatch: `{prefix}` != `{framePrefix}`");
-
-				frameCount = Math.Max(frameCount, Exts.ParseInt32Invariant(match.Groups["frame"].ValueSpan) + 1);
-			}
-
-			var frames = new ISpriteFrame[frameCount];
+			var frames = new ISpriteFrame[tgaEntries.Length];
 			for (var i = 0; i < frames.Length; i++)
 			{
-				var tgaEntry = container.GetEntry($"{framePrefix}{i:D4}.tga");
-
-				// Blank frame
-				if (tgaEntry == null)
-				{
-					frames[i] = new TgaSprite.TgaFrame();
-					continue;
-				}
-
-				var metaEntry = container.GetEntry($"{framePrefix}{i:D4}.meta");
+				var tgaEntry = tgaEntries[i];
+				var metaName = tgaEntry.Name[..^4] + ".meta";
+				var metaEntry = container.GetEntry(metaName);
 				using (var tgaStream = container.GetInputStream(tgaEntry))
 				{
 					var metaStream = metaEntry != null ? container.GetInputStream(metaEntry) : null;
@@ -105,12 +85,17 @@ namespace OpenRA.Mods.Cnc.SpriteLoaders
 							metaText = metaReader.ReadToEnd();
 
 						var meta = MetaRegex.Match(metaText);
-						var crop = Rectangle.FromLTRB(
-							ParseGroup(meta, "left"), ParseGroup(meta, "top"),
-							ParseGroup(meta, "right"), ParseGroup(meta, "bottom"));
+						if (meta.Success)
+						{
+							var crop = Rectangle.FromLTRB(
+								ParseGroup(meta, "left"), ParseGroup(meta, "top"),
+								ParseGroup(meta, "right"), ParseGroup(meta, "bottom"));
 
-						var frameSize = new Size(ParseGroup(meta, "width"), ParseGroup(meta, "height"));
-						frames[i] = new TgaSprite.TgaFrame(tgaStream, frameSize, crop, 0.125f);
+							var frameSize = new Size(ParseGroup(meta, "width"), ParseGroup(meta, "height"));
+							frames[i] = new TgaSprite.TgaFrame(tgaStream, frameSize, crop, 0.125f);
+						}
+						else
+							frames[i] = new TgaSprite.TgaFrame(tgaStream);
 					}
 					else
 						frames[i] = new TgaSprite.TgaFrame(tgaStream);
