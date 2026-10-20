@@ -73,6 +73,7 @@ namespace OpenRA.Graphics
 		Vector2 Offset { get; }
 		byte[] Data { get; }
 		bool DisableExportPadding { get; }
+		float Scale => 1f;
 	}
 
 	public class FrameCache

@@ -76,6 +76,7 @@ namespace OpenRA.Mods.Common.SpriteLoaders
 			public Vector2 Offset { get; }
 			public byte[] Data { get; }
 			public bool DisableExportPadding => false;
+			public float Scale { get; } = 1f;
 
 			public TgaFrame()
 			{
@@ -98,9 +99,10 @@ namespace OpenRA.Mods.Common.SpriteLoaders
 				}
 			}
 
-			public TgaFrame(Stream stream, Size frameSize, Rectangle frameWindow)
+			public TgaFrame(Stream stream, Size frameSize, Rectangle frameWindow, float scale = 1f)
 				: this(stream)
 			{
+				Scale = scale;
 				FrameSize = frameSize;
 				Offset = 0.5f * new Vector2(frameWindow.Left + frameWindow.Right - FrameSize.Width, frameWindow.Top + frameWindow.Bottom - FrameSize.Height);
 			}

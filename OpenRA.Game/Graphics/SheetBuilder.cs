@@ -79,11 +79,11 @@ namespace OpenRA.Graphics
 
 		public Sprite Add(ISpriteFrame frame, bool premultiplied = false)
 		{
-			return Add(frame.Data, frame.Type, frame.Size, 0, frame.Offset.AsVector3(), premultiplied);
+			return Add(frame.Data, frame.Type, frame.Size, 0, frame.Offset.AsVector3() * frame.Scale, premultiplied, frame.Scale);
 		}
 
 		public Sprite Add(byte[] src, SpriteFrameType type, Size size, bool premultiplied = false) { return Add(src, type, size, 0, Vector3.Zero, premultiplied); }
-		public Sprite Add(byte[] src, SpriteFrameType type, Size size, float zRamp, in Vector3 spriteOffset, bool premultiplied = false)
+		public Sprite Add(byte[] src, SpriteFrameType type, Size size, float zRamp, in Vector3 spriteOffset, bool premultiplied = false, float scale = 1f)
 		{
 			if (Current == null)
 			{
@@ -93,9 +93,9 @@ namespace OpenRA.Graphics
 
 			// Don't bother allocating empty sprites
 			if (size.Width == 0 || size.Height == 0)
-				return new Sprite(Current, Rectangle.Empty, 0, spriteOffset, CurrentChannel, BlendMode.Alpha);
+				return new Sprite(Current, Rectangle.Empty, 0, spriteOffset, CurrentChannel, BlendMode.Alpha, scale);
 
-			var rect = Allocate(size, zRamp, spriteOffset);
+			var rect = Allocate(size, zRamp, spriteOffset, scale);
 			Util.FastCopyIntoChannel(rect, src, type, premultiplied);
 			Current.CommitBufferedData(rect.Bounds);
 			return rect;

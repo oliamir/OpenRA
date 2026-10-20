@@ -49,7 +49,9 @@ namespace OpenRA.Mods.Cnc.SpriteLoaders
 	public class ShpRemasteredSprite
 	{
 		static readonly Regex FilenameRegex = new(@"^(?<prefix>.+?[\-_])(?<frame>\d{4})\.tga$");
-		static readonly Regex MetaRegex = new(@"^\{""size"":\[(?<width>\d+),(?<height>\d+)\],""crop"":\[(?<left>\d+),(?<top>\d+),(?<right>\d+),(?<bottom>\d+)\]\}$");
+		static readonly Regex MetaRegex = new(
+			@"^\{""size"":\s*\[\s*(?<width>\d+)\s*,\s*(?<height>\d+)\s*\]," +
+			@"\s*""crop"":\s*\[\s*(?<left>\d+)\s*,\s*(?<top>\d+)\s*,\s*(?<right>\d+)\s*,\s*(?<bottom>\d+)\s*\]\s*\}$");
 
 		static int ParseGroup(Match match, string group)
 		{
@@ -108,7 +110,7 @@ namespace OpenRA.Mods.Cnc.SpriteLoaders
 							ParseGroup(meta, "right"), ParseGroup(meta, "bottom"));
 
 						var frameSize = new Size(ParseGroup(meta, "width"), ParseGroup(meta, "height"));
-						frames[i] = new TgaSprite.TgaFrame(tgaStream, frameSize, crop);
+						frames[i] = new TgaSprite.TgaFrame(tgaStream, frameSize, crop, 0.125f);
 					}
 					else
 						frames[i] = new TgaSprite.TgaFrame(tgaStream);
